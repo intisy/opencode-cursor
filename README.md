@@ -141,6 +141,52 @@ opencode run "your prompt" --model cursor-acp/auto
 opencode run "your prompt" --model cursor-acp/sonnet-4.5
 ```
 
+## MCP Tool Bridge
+
+The plugin bridges MCP (Model Context Protocol) servers into Cursor models via a `mcptool` CLI. Any MCP server configured in `opencode.json` becomes callable through cursor-agent's Shell tool.
+
+### Configure MCP servers
+
+Add to `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "mcp": {
+    "hybrid-memory": {
+      "type": "local",
+      "command": ["node", "/path/to/mcp-server.js"],
+      "environment": {}
+    },
+    "playwright": {
+      "type": "local",
+      "command": ["npx", "-y", "@playwright/mcp", "--headless"],
+      "environment": {}
+    }
+  }
+}
+```
+
+### mcptool CLI
+
+Installed automatically with the plugin:
+
+```bash
+mcptool servers                                    # list configured servers
+mcptool tools [server]                             # list available tools
+mcptool call hybrid-memory memory_stats            # call a tool
+mcptool call playwright browser_navigate '{"url":"https://example.com"}'
+```
+
+The model uses `mcptool` via Shell automatically — no manual intervention needed. The plugin injects usage instructions into the system prompt.
+
+### Supported MCP servers
+
+Any MCP server using stdio transport works. Tested with:
+- **hybrid-memory** — persistent memory with semantic search
+- **@modelcontextprotocol/server-filesystem** — file operations
+- **@playwright/mcp** — headless browser automation
+- **@modelcontextprotocol/server-everything** — MCP test/reference server
+
 ## Architecture
 
 ```mermaid
@@ -161,9 +207,14 @@ flowchart TB
     OC -->|"execute tool locally"| TOOLRUN["OpenCode tool runtime"]
     TOOLRUN -->|"next request includes role:tool result"| SDK
     SDK -->|"TOOL_RESULT prompt block"| AGENT
+
+    AGENT -->|"Shell tool_call"| MCPTOOL["mcptool CLI"]
+    MCPTOOL -->|"stdio"| MCP["MCP Servers"]
+    MCP --> MCPTOOL
+    MCPTOOL --> AGENT
 ```
 
-Default mode: `CURSOR_ACP_TOOL_LOOP_MODE=opencode`. Legacy `proxy-exec` still available. Details: [docs/architecture/runtime-tool-loop.md](docs/architecture/runtime-tool-loop.md).
+Default mode: `CURSOR_ACP_TOOL_LOOP_MODE=opencode`. Details: [docs/architecture/runtime-tool-loop.md](docs/architecture/runtime-tool-loop.md).
 
 ## Alternatives
 THERE is currently not a single perfect plugin for cursor in opencode, my advice is stick with what is the LEAST worst option for you.
@@ -176,7 +227,8 @@ THERE is currently not a single perfect plugin for cursor in opencode, my advice
 | **Error Parsing** |   ✓ (quota/auth/model)     |                                               ✗                                                |                                          ✗                                           |                              Debug logging                               |
 | **Installer**     |     ✓ TUI + one-liner      |                                               ✗                                                |                                          ✗                                           |                                    ✗                                     |
 | **OAuth Flow**    |  ✓ OpenCode integration    |                                            ✓ Native                                            |                                    Browser login                                     |                                 Keychain                                 |
-| **Tool Calling**  | ✓ OpenCode-owned loop + proxy-exec |                                            ✓ Native                                            |                                    ✓ Experimental                                    |                                    ✗                                     |
+| **Tool Calling**  | ✓ OpenCode-owned loop |                                            ✓ Native                                            |                                    ✓ Experimental                                    |                                    ✗                                     |
+| **MCP Bridge**    | ✓ mcptool CLI (any MCP server) |                                               ✗                                                |                                          ✗                                           |                                    ✗                                     |
 | **Stability**     | Stable (uses official CLI) |                                          Experimental                                          |                                        Stable                                        |                               Experimental                               |
 | **Dependencies**  |     bun, cursor-agent      |                                              npm                                               |                                  bun, cursor-agent                                   |                               Node.js 18+                                |
 | **Port**          |           32124            |                                             18741                                              |                                        32123                                         |                                   4141                                   |
@@ -194,20 +246,20 @@ Debug logging: `CURSOR_ACP_LOG_LEVEL=debug opencode run "your prompt" --model cu
 
 ```mermaid
 flowchart LR
-    P1[/Stabilise/] --> P2[/MCP Server/] --> P3[/Simplify/] --> P4[/ACP + MCP/]
-    
+    P1[/Stabilise/] --> P2[/MCP Bridge/] --> P3[/Simplify/] --> P4[/ACP + MCP/]
+
     style P1 fill:#264653,stroke:#1d3557,color:#fff
     style P2 fill:#264653,stroke:#1d3557,color:#fff
     style P3 fill:#495057,stroke:#343a40,color:#adb5bd
     style P4 fill:#495057,stroke:#343a40,color:#adb5bd
 ```
 
-[X] **Stabilise** — Clean up dead code, fix test isolation  
-[ ] **MCP Server** — Expose OpenCode tools via stdio transport  
-[ ] **Simplify** — Rip out serialisation layers  
+[X] **Stabilise** — Clean up dead code, fix test isolation
+[X] **MCP Bridge** — Bridge MCP servers into Cursor models via `mcptool` CLI
+[ ] **Simplify** — Rip out serialisation layers
 [ ] **ACP + MCP** — Structured protocols end-to-end
 
-`Future Architecture` - Long-term direction is to replace the current custom proxy and provider-boundary approach with `OpenCode -> Cursor ACP -> MCP`, using official Cursor ACP as the backend so tool ownership stays agent-side and the eventual OpenCode integration can remain small. `Status` - Deferred: this is the preferred path, but it is currently blocked because official Cursor ACP does not yet reliably propagate MCP servers during ACP session setup. `Details` - See [docs/architecture/cursor-acp-mcp-future.md](docs/architecture/cursor-acp-mcp-future.md).
+`Future Architecture` — Long-term direction is `OpenCode -> Cursor ACP -> MCP`, using official Cursor ACP as the backend. Currently deferred: Cursor ACP does not yet reliably propagate MCP servers during ACP session setup. See [docs/architecture/cursor-acp-mcp-future.md](docs/architecture/cursor-acp-mcp-future.md).
 
 ## License
 
